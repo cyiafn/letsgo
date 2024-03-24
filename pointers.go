@@ -9,9 +9,6 @@ func IsNil[T any](v *T) bool {
 // Ptr returns a pointer to the given value.
 // This allows more concise way to return a pointer to a primitive.
 func Ptr[T any](v T) *T {
-	if v == nil {
-		return nil
-	}
 	return &v
 }
 
