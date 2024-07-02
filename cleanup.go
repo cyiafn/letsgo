@@ -35,7 +35,7 @@ func OnPanicRun(processRecovery bool, handleRecovery func(r any), cleanups ...fu
 		}
 	}
 
-	if cleanups == nil || len(cleanups) == 0 {
+	if len(cleanups) == 0 {
 		return
 	}
 
@@ -68,7 +68,7 @@ func CleanupWhenShutdown(interceptSignals []os.Signal, cleanups ...func()) {
 	go func() {
 		sigs := make(chan os.Signal, 1)
 
-		if interceptSignals == nil || len(interceptSignals) == 0 {
+		if len(interceptSignals) == 0 {
 			interceptSignals = []os.Signal{syscall.SIGINT}
 		}
 		signal.Notify(sigs, interceptSignals...)
@@ -77,7 +77,7 @@ func CleanupWhenShutdown(interceptSignals []os.Signal, cleanups ...func()) {
 			for _, cleanup := range cleanups {
 				cleanup()
 			}
+			os.Exit(0)
 		}()
-		os.Exit(0)
 	}()
 }
