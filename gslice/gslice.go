@@ -1,4 +1,4 @@
-package gslices
+package gslice
 
 func Map[T, U any](s []T, f func(T) U) []U {
 	r := make([]U, len(s))
@@ -7,3 +7,4 @@ func Map[T, U any](s []T, f func(T) U) []U {
 	}
 	return r
 }
+
