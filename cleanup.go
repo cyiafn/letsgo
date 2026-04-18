@@ -13,20 +13,23 @@ import (
 // function in cleanups in order.
 //
 // Semantics:
-//   - Not pure: calls recover() and therefore MUST be used via `defer` in
-//     the same goroutine whose panic you want to catch. Using it in a
-//     non-deferred call is a no-op for panic handling.
+//   - MUST be installed via `defer` in the same goroutine whose panic you
+//     want to catch — it calls recover() internally, which only works from
+//     a deferred call. Used non-deferred, it is a no-op for panic handling
+//     (though cleanups still run).
 //   - Always swallows the panic. Even when processRecovery is false, the
-//     panic does not propagate — it is silently discarded and cleanups
-//     still run. If you need to re-panic, do it yourself inside
-//     handleRecovery.
-//   - handleRecovery is only invoked when processRecovery is true AND a
-//     panic occurred. Passing a nil handleRecovery with processRecovery
-//     set to true will itself panic.
-//   - cleanups always run (on the panic path AND on a normal return),
-//     in the order they were passed. They run sequentially in the calling
-//     goroutine.
-//   - Does not call os.Exit; control returns to the caller's deferred chain.
+//     panic does not propagate — it is silently discarded. If you need to
+//     re-panic, do it yourself inside handleRecovery.
+//   - handleRecovery is invoked only when processRecovery is true AND a
+//     panic was recovered AND handleRecovery is non-nil. A nil
+//     handleRecovery is treated as a no-op, never a panic.
+//   - Cleanups are GUARANTEED to run on both paths (panic and normal return),
+//     in the order they were passed. If handleRecovery panics, or if any
+//     cleanup panics, that panic is recovered internally so later cleanups
+//     still execute — i.e. a single misbehaving cleanup cannot take down
+//     its siblings.
+//   - Runs sequentially in the calling goroutine. Does not call os.Exit;
+//     control returns to the caller's deferred chain.
 //
 // Example:
 //
@@ -45,18 +48,18 @@ import (
 //	    doWork() // if this panics: prints the panic, runs closeDB, then flushLogs.
 //	}
 func OnPanicRun(processRecovery bool, handleRecovery func(r any), cleanups ...func()) {
-	if r := recover(); r != nil {
-		if processRecovery {
+	if r := recover(); r != nil && processRecovery && handleRecovery != nil {
+		func() {
+			defer func() { _ = recover() }()
 			handleRecovery(r)
-		}
-	}
-
-	if len(cleanups) == 0 {
-		return
+		}()
 	}
 
 	for _, cleanup := range cleanups {
-		cleanup()
+		func() {
+			defer func() { _ = recover() }()
+			cleanup()
+		}()
 	}
 }
 

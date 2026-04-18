@@ -1,22 +1,24 @@
 // Package letsgo provides generic useful functions for Go.
 package letsgo
 
-import "github.com/bytedance/sonic"
+import "encoding/json"
 
-// DumpToJSON marshals v to a JSON string using bytedance/sonic, discarding
+// DumpToJSON marshals v to a JSON string using encoding/json, discarding
 // any error. Intended for best-effort logging / debugging output where an
 // unmarshalable value should not abort the calling code.
 //
 // Semantics:
-//   - Pure with respect to v: no mutation of the input.
 //   - Error-swallowing: any marshal error (including unsupported types like
 //     chan, func, or complex numbers, or cycles) yields "" instead of an
-//     error. Do NOT use this for on-the-wire or persistence payloads — use
-//     sonic.Marshal / encoding/json directly so errors are surfaced.
+//     error. Do NOT use this for on-the-wire or persistence payloads — call
+//     json.Marshal directly so errors are surfaced.
 //   - Returns "" when v is nil (avoiding the literal string "null" you would
-//     otherwise get from the marshaller).
-//   - Uses sonic.MarshalString, which avoids the []byte -> string copy of
-//     sonic.Marshal, so this is cheaper than json.Marshal + string cast.
+//     otherwise get from the marshaller). Note: this is an interface-nil
+//     check; a typed nil (e.g. a (*T)(nil) stored in an `any`) is NOT
+//     caught here and will be marshalled as "null".
+//   - Uses standard encoding/json behavior: HTML characters (<, >, &) are
+//     escaped, and map keys are emitted in sorted order — so output is
+//     deterministic across runs.
 //   - Respects standard `json:"..."` struct tags.
 //
 // Example:
@@ -31,10 +33,10 @@ func DumpToJSON(v any) string {
 		return ""
 	}
 
-	JSON, err := sonic.MarshalString(v)
+	b, err := json.Marshal(v)
 	if err != nil {
 		return ""
 	}
 
-	return JSON
+	return string(b)
 }
