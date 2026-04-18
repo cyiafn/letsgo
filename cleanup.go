@@ -7,27 +7,43 @@ import (
 	"syscall"
 )
 
-// OnPanicRun executes the given functions f if a panic occurs.
-// If processRecovery is enabled, your handeRecovery function will be executed.
-// The handleRecovery function should accept a recovery value and execute your custom code such as logging
-// the traceStack or anything you might desire.
+// OnPanicRun is a panic-recovery helper intended to be installed with defer.
+// If the surrounding goroutine panics, it recovers the panic, optionally
+// hands the recovered value to handleRecovery, and then invokes every
+// function in cleanups in order.
 //
-// Sample usecase:
+// Semantics:
+//   - Not pure: calls recover() and therefore MUST be used via `defer` in
+//     the same goroutine whose panic you want to catch. Using it in a
+//     non-deferred call is a no-op for panic handling.
+//   - Always swallows the panic. Even when processRecovery is false, the
+//     panic does not propagate — it is silently discarded and cleanups
+//     still run. If you need to re-panic, do it yourself inside
+//     handleRecovery.
+//   - handleRecovery is only invoked when processRecovery is true AND a
+//     panic occurred. Passing a nil handleRecovery with processRecovery
+//     set to true will itself panic.
+//   - cleanups always run (on the panic path AND on a normal return),
+//     in the order they were passed. They run sequentially in the calling
+//     goroutine.
+//   - Does not call os.Exit; control returns to the caller's deferred chain.
 //
-// import (
+// Example:
 //
-//		"fmt"
-//		"runtime/debug"
-//		"github.com/cyiafn/letsgo"
+//	import (
+//	    "fmt"
+//	    "runtime/debug"
+//	    "github.com/cyiafn/letsgo"
 //	)
 //
 //	func main() {
-//		defer letsgo.OnPanicRun(true, func(r interface{}) {
-//			fmt.Println(r)
-//			debug.PrintStack()
-//		}, closeConnToDB())
+//	    defer letsgo.OnPanicRun(true, func(r any) {
+//	        fmt.Println("panic:", r)
+//	        debug.PrintStack()
+//	    }, closeDB, flushLogs)
 //
-// This should be ran as a deferred function at the start of your application.
+//	    doWork() // if this panics: prints the panic, runs closeDB, then flushLogs.
+//	}
 func OnPanicRun(processRecovery bool, handleRecovery func(r any), cleanups ...func()) {
 	if r := recover(); r != nil {
 		if processRecovery {
@@ -44,32 +60,47 @@ func OnPanicRun(processRecovery bool, handleRecovery func(r any), cleanups ...fu
 	}
 }
 
-// CleanupWhenShutdown executes the given functions cleanups when the process is about to shut down.
-// It is useful for cleaning up your instance before shutting down such as freeing up connections to the DB, etc.
-// It detects shutdowns using os.Signals. Most common shutdown signals are syscall.SIGTERM and syscall.SIGINT.
-// This function defaults to SIGINT if no signals are passed in.
-// Alternative, you can pass in your custom interceptSignals that you want it to detect.
+// CleanupWhenShutdown installs an asynchronous OS-signal handler that runs
+// the provided cleanup functions exactly once when the process receives a
+// shutdown signal, then calls os.Exit(0).
 //
-// Sample Usage:
-// import (
+// Semantics:
+//   - Non-blocking: returns immediately. The signal handler runs in its own
+//     goroutine.
+//   - Installs a process-wide signal handler via signal.Notify. Calling it
+//     multiple times will register additional (redundant) handlers — it is
+//     intended to be called once at startup.
+//   - If interceptSignals is nil or empty, it defaults to SIGINT and SIGTERM.
+//     Pass a custom slice to listen for other signals (e.g. SIGHUP for reload).
+//   - cleanups run sequentially, in the order they were passed, from within
+//     the handler goroutine. If any cleanup panics, subsequent cleanups will
+//     NOT run and the process will terminate via the default panic path
+//     instead of os.Exit(0). Recover inside each cleanup if you need
+//     best-effort execution of all of them.
+//   - Terminates via os.Exit(0), bypassing any further deferred functions.
 //
-//	"github.com/cyiafn/letsgo"
-//	"os"
-//	"syscall"
+// Example:
 //
-// )
+//	import (
+//	    "os"
+//	    "syscall"
+//	    "github.com/cyiafn/letsgo"
+//	)
 //
 //	func main() {
-//		letsgo.CleanupWhenShutdown([]os.Signal{syscall.SIGINT, syscall.SIGTERM}, closeConnToDB())
+//	    letsgo.CleanupWhenShutdown(
+//	        []os.Signal{syscall.SIGINT, syscall.SIGTERM},
+//	        closeDB,
+//	        flushMetrics,
+//	    )
+//	    runServer() // on Ctrl-C: closeDB -> flushMetrics -> os.Exit(0).
 //	}
-//
-// This should be ran at the start of your application.
 func CleanupWhenShutdown(interceptSignals []os.Signal, cleanups ...func()) {
 	go func() {
 		sigs := make(chan os.Signal, 1)
 
 		if len(interceptSignals) == 0 {
-			interceptSignals = []os.Signal{syscall.SIGINT}
+			interceptSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM}
 		}
 		signal.Notify(sigs, interceptSignals...)
 		go func() {
