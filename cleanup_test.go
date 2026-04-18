@@ -58,6 +58,45 @@ func TestOnPanicRun_NoCleanupsProvided(t *testing.T) {
 	}()
 }
 
+func TestOnPanicRun_NilHandlerDoesNotPanic(t *testing.T) {
+	var count int32
+	func() {
+		defer OnPanicRun(true, nil, func() { atomic.AddInt32(&count, 1) })
+		panic("boom")
+	}()
+	if atomic.LoadInt32(&count) != 1 {
+		t.Fatal("cleanup should run even with nil handleRecovery")
+	}
+}
+
+func TestOnPanicRun_CleanupsRunWhenHandlerPanics(t *testing.T) {
+	var count int32
+	func() {
+		defer OnPanicRun(true, func(r any) { panic("handler exploded") },
+			func() { atomic.AddInt32(&count, 1) },
+			func() { atomic.AddInt32(&count, 1) },
+		)
+		panic("original")
+	}()
+	if atomic.LoadInt32(&count) != 2 {
+		t.Fatalf("cleanups ran %d times, want 2 even when handler panics", count)
+	}
+}
+
+func TestOnPanicRun_CleanupPanicDoesNotSkipSiblings(t *testing.T) {
+	var count int32
+	func() {
+		defer OnPanicRun(false, nil,
+			func() { atomic.AddInt32(&count, 1) },
+			func() { panic("middle explodes") },
+			func() { atomic.AddInt32(&count, 1) },
+		)
+	}()
+	if atomic.LoadInt32(&count) != 2 {
+		t.Fatalf("got %d, want 2; a panicking cleanup must not skip siblings", count)
+	}
+}
+
 func TestCleanupWhenShutdown_DoesNotBlockOrRunImmediately(t *testing.T) {
 	var ran int32
 	CleanupWhenShutdown(nil, func() { atomic.AddInt32(&ran, 1) })
